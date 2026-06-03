@@ -1,0 +1,11 @@
+[Unit]
+Description=Supplier Bot WeCom archive poll
+After=network-online.target supplier-bot-callback.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=admin
+WorkingDirectory=/opt/supplier-bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/supplier-bot/scripts/run_wecom_archive_poll_once.sh

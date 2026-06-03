@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Supplier Bot WeCom archive poll every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Persistent=true
+Unit=supplier-bot-archive-poll.service
+
+[Install]
+WantedBy=timers.target

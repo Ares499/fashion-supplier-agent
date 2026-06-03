@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Runtime/business data
+data/**
+!data/
+!data/.gitkeep
+
+# Generated outputs and logs
+logs/
+outputs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Vendor SDK binaries and local native libraries
+vendor/
+*.so
+*.dylib
+*.dll
+
+# One-off local delivery scripts
+scripts/build_ares_selection_workbook.py
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
