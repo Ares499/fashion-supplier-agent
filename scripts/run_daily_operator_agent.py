@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from supplier_bot.config import config
 from supplier_bot.alerts import send_receive_channel_failure_alert
+from supplier_bot.contact_roles import load_contact_roles, merge_contact_roles, write_contact_roles
 from supplier_bot.desktop_receiver import (
     capture_selector_selections,
     capture_waiting_supplier_images,
@@ -38,6 +39,12 @@ from supplier_bot.workflow_engine import WorkflowEngine
 LOG_DIR = ROOT / "logs"
 STATE_PATH = ROOT / "data/runtime/daily_operator_state.json"
 RECEIVE_HEALTH_MAX_AGE_SECONDS = 30 * 60
+SERVER_PULL_EXCLUDES = (
+    "tasks/*/desktop_outbox.json",
+    "tasks/*/desktop_ask_batch_*.json",
+    "runtime/daily_operator_state.json",
+    "runtime/process_inbox_events.lock",
+)
 
 def should_stop_for_receive_channel(runtime_mode: str, receive_channel_ok: bool) -> bool:
     return runtime_mode in {"official", "hybrid"} and not receive_channel_ok
@@ -69,6 +76,13 @@ def _server_sync_command() -> list[str] | None:
     if config.server_sync_ssh_key:
         command.extend(["-e", f"ssh -i {config.server_sync_ssh_key} -o StrictHostKeyChecking=no"])
     return command
+
+
+def _server_pull_exclude_args() -> list[str]:
+    args: list[str] = []
+    for pattern in SERVER_PULL_EXCLUDES:
+        args.append(f"--exclude={pattern}")
+    return args
 
 
 def _server_sync_parts() -> tuple[str, str] | None:
@@ -144,20 +158,57 @@ def _restore_sent_outbox_tasks(run_date: date, sent_before_sync: dict) -> bool:
     return changed
 
 
+def _merge_contact_roles_after_server_pull(local_contacts) -> bool:
+    contacts_path = config.data_dir / "wecom_contacts.json"
+    if not local_contacts:
+        return False
+    pulled_contacts = load_contact_roles(contacts_path)
+    merged_contacts = merge_contact_roles(local_contacts, pulled_contacts)
+    write_contact_roles(contacts_path, merged_contacts)
+    return True
+
+
 def sync_server_data_to_local(run_date: date | None = None) -> None:
     command = _server_sync_command()
     if not command:
         return
+    local_contacts = load_contact_roles(config.data_dir / "wecom_contacts.json")
     sent_before_sync = _snapshot_sent_outbox_tasks(run_date) if run_date else {}
     remote = config.server_sync_target.rstrip("/") + "/data/"
     local = str(config.data_dir) + "/"
     try:
-        subprocess.run(command + [remote, local], check=True, capture_output=True, text=True, timeout=120)
+        subprocess.run(
+            command + _server_pull_exclude_args() + [remote, local],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if _merge_contact_roles_after_server_pull(local_contacts):
+            append_log("server sync pull merged contact roles with local authority")
         if run_date and _restore_sent_outbox_tasks(run_date, sent_before_sync):
             append_log("server sync pull merged local sent desktop outbox state")
         append_log(f"server sync pull ok: {remote} -> {local}")
     except Exception as exc:
         append_log(f"server sync pull error: {exc}")
+
+
+def sync_local_contact_roles_to_server() -> None:
+    command = _server_sync_command()
+    if not command:
+        return
+    contacts_path = config.data_dir / "wecom_contacts.json"
+    if not contacts_path.exists():
+        return
+    if not load_contact_roles(contacts_path):
+        append_log("server sync contact role push skipped: local contact role table is empty")
+        return
+    remote = config.server_sync_target.rstrip("/") + "/data/wecom_contacts.json"
+    try:
+        subprocess.run(command + [str(contacts_path), remote], check=True, capture_output=True, text=True, timeout=120)
+        append_log(f"server sync contact roles push ok: {contacts_path} -> {remote}")
+    except Exception as exc:
+        append_log(f"server sync contact roles push error: {exc}")
 
 
 def sync_today_tasks_to_server(run_date: date) -> None:
@@ -253,6 +304,7 @@ def run_daily_plan(
     remote_catchup_result: dict = {}
     if sync_server_data:
         sync_server_data_to_local(run_date)
+        sync_local_contact_roles_to_server()
         receive_channel_ok, receive_health_detail = receive_channel_health_ok(run_date)
         if not receive_channel_ok:
             append_log(f"receive channel unhealthy after server sync: {receive_health_detail}")

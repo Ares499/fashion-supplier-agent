@@ -2043,6 +2043,116 @@ class CoreFlowTest(unittest.TestCase):
         self.assertEqual(result.attempted, 1)
         self.assertEqual(result.skipped, 1)
 
+    def test_server_sync_preserves_local_contact_roles_and_desktop_outbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from scripts import run_daily_operator_agent as runner
+            from supplier_bot.desktop_outbox import DesktopOutboxTask, write_outbox
+
+            data_dir = Path(tmp) / "data"
+            contacts_path = data_dir / "wecom_contacts.json"
+            outbox_path = data_dir / "tasks" / "2026-06-03" / "desktop_outbox.json"
+            write_contact_roles(
+                contacts_path,
+                [
+                    ContactRole(
+                        "SUP_LOCAL",
+                        "本地供应商",
+                        roles=[ROLE_SUPPLIER],
+                        search_text="本地供应商",
+                    )
+                ],
+            )
+            write_outbox(
+                outbox_path,
+                [
+                    DesktopOutboxTask(
+                        task_id="ask:2026-06-03:SUP_LOCAL",
+                        kind="ask_supplier",
+                        conversation_name="本地供应商",
+                        search_text="本地供应商",
+                        message="本地问款",
+                    )
+                ],
+            )
+
+            def fake_rsync(command, **_kwargs):
+                self.assertIn("--exclude=tasks/*/desktop_outbox.json", command)
+                self.assertIn("--exclude=tasks/*/desktop_ask_batch_*.json", command)
+                write_contact_roles(contacts_path, [])
+                return Mock(stdout="", stderr="")
+
+            old_data_dir = runner.config.data_dir
+            old_target = runner.config.server_sync_target
+            try:
+                runner.config.data_dir = data_dir
+                runner.config.server_sync_target = "example.test:/srv/supplier-bot"
+                with patch.object(runner.subprocess, "run", fake_rsync), patch.object(runner, "append_log"):
+                    runner.sync_server_data_to_local(datetime.fromisoformat("2026-06-03T00:00:00").date())
+            finally:
+                runner.config.data_dir = old_data_dir
+                runner.config.server_sync_target = old_target
+
+            contacts = load_contact_roles(contacts_path)
+            outbox = load_outbox(outbox_path)
+
+        self.assertEqual([(contact.contact_id, contact.display_name, contact.roles) for contact in contacts], [("SUP_LOCAL", "本地供应商", [ROLE_SUPPLIER])])
+        self.assertEqual([task.task_id for task in outbox], ["ask:2026-06-03:SUP_LOCAL"])
+        self.assertEqual(outbox[0].message, "本地问款")
+
+    def test_server_sync_merges_remote_external_id_without_losing_local_roles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from scripts import run_daily_operator_agent as runner
+
+            data_dir = Path(tmp) / "data"
+            contacts_path = data_dir / "wecom_contacts.json"
+            write_contact_roles(
+                contacts_path,
+                [
+                    ContactRole(
+                        "SUP_LOCAL",
+                        "本地供应商",
+                        roles=[ROLE_SUPPLIER],
+                        search_text="本地搜索名",
+                        sample_address="本地地址",
+                    )
+                ],
+            )
+
+            def fake_rsync(_command, **_kwargs):
+                write_contact_roles(
+                    contacts_path,
+                    [
+                        ContactRole(
+                            "wm_remote",
+                            "本地供应商",
+                            source="wecom_external_contact",
+                            external_user_id="wm_remote",
+                            roles=[],
+                            search_text="服务器名称",
+                        )
+                    ],
+                )
+                return Mock(stdout="", stderr="")
+
+            old_data_dir = runner.config.data_dir
+            old_target = runner.config.server_sync_target
+            try:
+                runner.config.data_dir = data_dir
+                runner.config.server_sync_target = "example.test:/srv/supplier-bot"
+                with patch.object(runner.subprocess, "run", fake_rsync), patch.object(runner, "append_log"):
+                    runner.sync_server_data_to_local(datetime.fromisoformat("2026-06-03T00:00:00").date())
+            finally:
+                runner.config.data_dir = old_data_dir
+                runner.config.server_sync_target = old_target
+
+            [contact] = load_contact_roles(contacts_path)
+
+        self.assertEqual(contact.contact_id, "SUP_LOCAL")
+        self.assertEqual(contact.external_user_id, "wm_remote")
+        self.assertEqual(contact.roles, [ROLE_SUPPLIER])
+        self.assertEqual(contact.search_text, "本地搜索名")
+        self.assertEqual(contact.sample_address, "本地地址")
+
     def test_inbox_events_queue_and_ingest_supplier_images(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
