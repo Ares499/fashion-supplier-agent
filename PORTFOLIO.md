@@ -2,7 +2,7 @@
 
 ## Project
 
-Fashion Supplier Selection Agent
+服装电商供应商选款自动化 Agent / Fashion Supplier Selection Agent
 
 ## One-Line Pitch
 
@@ -50,4 +50,3 @@ The important engineering part is that the workflow is not a one-off script. It 
 - Move supplier-facing sends to official APIs when enterprise permissions are ready.
 - Add a public demo video or screenshots generated from demo data.
 - Split deployment docs for local desktop, server SDK polling, and all-official modes.
-
